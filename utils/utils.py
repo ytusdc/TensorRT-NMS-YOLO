@@ -4,7 +4,7 @@ import numpy as np
 import cv2
 import matplotlib.pyplot as plt
 
-import common 
+from utils import common 
 
 class BaseEngine(object):
     def __init__(self, engine_path):
@@ -28,19 +28,19 @@ class BaseEngine(object):
         with open(engine_path, "rb") as f:
             serialized_engine = f.read()
         self.engine = runtime.deserialize_cuda_engine(serialized_engine)
-        self.imgsz = self.engine.get_binding_shape(0)[2:]  # get the read shape of model, in case user input it wrong
+        self.imgsz = self.engine.get_tensor_shape(self.engine.get_tensor_name(0))[2:]  # get the read shape of model, in case user input it wrong
         self.context = self.engine.create_execution_context()
         # Setup I/O bindings
         self.inputs = []
         self.outputs = []
         self.allocations = []
-        for i in range(self.engine.num_bindings):
+        for i in range(self.engine.num_io_tensors):
+            name = self.engine.get_tensor_name(i)
+            dtype = self.engine.get_tensor_dtype(name)
+            shape = self.engine.get_tensor_shape(name)
             is_input = False
-            if self.engine.binding_is_input(i):
+            if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 is_input = True
-            name = self.engine.get_binding_name(i)
-            dtype = self.engine.get_binding_dtype(i)
-            shape = self.engine.get_binding_shape(i)
             if is_input:
                 self.batch_size = shape[0]
             size = np.dtype(trt.nptype(dtype)).itemsize
@@ -56,7 +56,7 @@ class BaseEngine(object):
                 'size': size
             }
             self.allocations.append(allocation)
-            if self.engine.binding_is_input(i):
+            if self.engine.get_tensor_mode(name) == trt.TensorIOMode.INPUT:
                 self.inputs.append(binding)
             else:
                 self.outputs.append(binding)
@@ -90,7 +90,7 @@ class BaseEngine(object):
 
         self.context.execute_v2(self.allocations)
         for o in range(len(outputs)):
-            memcpy_device_to_host(outputs[o], self.outputs[o]['allocation'])
+            common.memcpy_device_to_host(outputs[o], self.outputs[o]['allocation'])
         return outputs
 
     def detect_video(self, video_path, conf=0.5, end2end=False):
@@ -135,11 +135,17 @@ class BaseEngine(object):
 
     def inference(self, img_path, conf=0.5, end2end=False):
         origin_img = cv2.imread(img_path)
-        img, ratio = preproc(origin_img, self.imgsz, self.mean, self.std)
+        # img, ratio = preproc(origin_img, self.imgsz, self.mean, self.std)
+        img, ratio, dwdh = letterbox(origin_img, self.imgsz)
         data = self.infer(img)
         if end2end:
-            num, final_boxes, final_scores, final_cls_inds = data
+            num, final_boxes, final_scores, final_cls_inds  = data
+            # final_boxes, final_scores, final_cls_inds  = data
+            dwdh = np.asarray(dwdh * 2, dtype=np.float32)
+            final_boxes -= dwdh
             final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
+            final_scores = np.reshape(final_scores, (-1, 1))
+            final_cls_inds = np.reshape(final_cls_inds, (-1, 1))
             dets = np.concatenate([np.array(final_boxes)[:int(num[0])], np.array(final_scores)[:int(num[0])], np.array(final_cls_inds)[:int(num[0])]], axis=-1)
         else:
             predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
@@ -257,6 +263,41 @@ def preproc(image, input_size, mean, std, swap=(2, 0, 1)):
     padded_img = padded_img.transpose(swap)
     padded_img = np.ascontiguousarray(padded_img, dtype=np.float32)
     return padded_img, r
+
+def  letterbox(im,
+              new_shape = (640, 640),
+              color = (114, 114, 114),
+              swap=(2, 0, 1)):
+    shape = im.shape[:2]  # current shape [height, width]
+    if isinstance(new_shape, int):
+        new_shape = (new_shape, new_shape)
+    # new_shape: [width, height]
+
+    # Scale ratio (new / old)
+    r = min(new_shape[0] / shape[1], new_shape[1] / shape[0])
+    # Compute padding [width, height]
+    new_unpad = int(round(shape[1] * r)), int(round(shape[0] * r))
+    dw, dh = new_shape[0] - new_unpad[0], new_shape[1] - new_unpad[
+        1]  # wh padding
+
+    dw /= 2  # divide padding into 2 sides
+    dh /= 2
+
+    if shape[::-1] != new_unpad:  # resize
+        im = cv2.resize(im, new_unpad, interpolation=cv2.INTER_LINEAR)
+    top, bottom = int(round(dh - 0.1)), int(round(dh + 0.1))
+    left, right = int(round(dw - 0.1)), int(round(dw + 0.1))
+    im = cv2.copyMakeBorder(im,
+                            top,
+                            bottom,
+                            left,
+                            right,
+                            cv2.BORDER_CONSTANT,
+                            value=color)  # add border
+    im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
+    im = im.transpose(swap)
+    im = np.ascontiguousarray(im, dtype=np.float32) / 255.
+    return im, r, (dw, dh)
 
 
 def rainbow_fill(size=50):  # simpler way to generate rainbow color
