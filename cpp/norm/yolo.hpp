@@ -301,8 +301,8 @@ static void draw_objects(const cv::Mat& bgr, const std::vector<Object>& objects,
     {
         const Object& obj = objects[i];
 
-        fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
-                obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+//        fprintf(stderr, "%d = %.5f at %.2f %.2f %.2f x %.2f\n", obj.label, obj.prob,
+//                obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
 
         cv::Scalar color = cv::Scalar(color_list[obj.label][0], color_list[obj.label][1], color_list[obj.label][2]);
         float c_mean = cv::mean(color)[0];
@@ -359,8 +359,8 @@ class YOLO
     private:
         static const int INPUT_W = 640;
         static const int INPUT_H = 640;
-        const char* INPUT_BLOB_NAME = "image_arrays";
-        const char* OUTPUT_BLOB_NAME = "outputs";
+        const char* INPUT_BLOB_NAME = "images";
+        const char* OUTPUT_BLOB_NAME = "output0";
         float* prob;
         int output_size = 1;
         ICudaEngine* engine;
@@ -421,14 +421,24 @@ void YOLO::detect_img(std::string image_path)
     blob = blobFromImage(pr_img);
     float scale = std::min(this->INPUT_W / (img.cols*1.0), this->INPUT_H / (img.rows*1.0));
 
+      // warmup
+    for (int num =0; num < 10; num++) {
+      doInference(*context, blob, this->prob, output_size, pr_img.size());
+    }
+
     // run inference
     auto start = std::chrono::system_clock::now();
     doInference(*context, blob, this->prob, output_size, pr_img.size());
     auto end = std::chrono::system_clock::now();
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+    std::cout << "trt time:"<< std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
 
+    auto start_postprocess = std::chrono::system_clock::now();
     std::vector<Object> objects;
     decode_outputs(this->prob, this->output_size, objects, scale, img_w, img_h);
+    auto end_postprocess = std::chrono::system_clock::now();
+
+    std::cout <<"post_process time:"<< std::chrono::duration_cast<std::chrono::milliseconds>(end_postprocess - start_postprocess).count() << "ms" << std::endl;
+
     draw_objects(img, objects, image_path);
     delete blob;
 

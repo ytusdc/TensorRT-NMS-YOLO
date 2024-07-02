@@ -331,6 +331,8 @@ Yolo::~Yolo() {
 
 int main(int argc, char** argv) {
   if (argc == 5 && std::string(argv[1]) == "-model_path" && std::string(argv[3]) == "-image_path") {
+
+//    auto start = std::chrono::system_clock::now();
     char* model_path = argv[2];
     char* image_path = argv[4];
     float* Boxes = new float[4000];
@@ -347,7 +349,7 @@ int main(int argc, char** argv) {
     auto start = std::chrono::system_clock::now();
     yolo.Infer(img.cols, img.rows, img.channels(), img.data, Boxes, ClassIndexs, BboxNum);
     auto end = std::chrono::system_clock::now();
-    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+    std::cout << "trt time:"<< std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
 
     yolo.draw_objects(img, Boxes, ClassIndexs, BboxNum);
 

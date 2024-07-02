@@ -204,6 +204,7 @@ class EngineBuilder:
                # output [1, 84, 8400]
                 strides = trt.Dims([1,1,1])
                 starts = trt.Dims([0,0,0])
+                # 添加一个 Shuffle 层来重塑输入，为矩阵乘法做准备：
                 previous_output = self.network.add_shuffle(previous_output)
                 previous_output.second_transpose    = (0, 2, 1)
                 # output [1, 8400, 84]
@@ -259,6 +260,8 @@ class EngineBuilder:
 
             fc = trt.PluginFieldCollection(fc) 
             nms_layer = creator.create_plugin("nms_layer", fc)
+
+            ddd = [boxes.get_output(0), scores.get_output(0)]
 
             layer = self.network.add_plugin_v2([boxes.get_output(0), scores.get_output(0)], nms_layer)
             layer.get_output(0).name = "num"

@@ -14,8 +14,13 @@ int main(int argc, char** argv) {
         return -1;
     }
 
+    auto start = std::chrono::system_clock::now();
     const std::string input_image_path {argv[3]};
     YOLO yolo(engine_file_path);
     yolo.detect_img(input_image_path);
+
+    auto end = std::chrono::system_clock::now();
+    std::cout << std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count() << "ms" << std::endl;
+
     return 0;
 }

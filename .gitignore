@@ -1,5 +1,8 @@
 **/__pycache__/
 
 *.trt
+*.pt
 
-*.onnx 
+*.onnx
+.idea/
+**/build/

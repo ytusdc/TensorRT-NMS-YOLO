@@ -148,20 +148,48 @@ class BaseEngine(object):
             final_cls_inds = np.reshape(final_cls_inds, (-1, 1))
             dets = np.concatenate([np.array(final_boxes)[:int(num[0])], np.array(final_scores)[:int(num[0])], np.array(final_cls_inds)[:int(num[0])]], axis=-1)
         else:
-            predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
-            dets = self.postprocess(predictions,ratio)
+            # predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
+            predictions = np.reshape(data, (1, -1, int(4+self.n_classes)))[0]
+
+            # cc = data[0]
+            # predictions = data[0].transpose(1, 0)
+            predictions = data[0]
+            dets = self.postprocess_2(predictions, ratio, dwdh)
 
         if dets is not None:
             final_boxes, final_scores, final_cls_inds = dets[:,
                                                              :4], dets[:, 4], dets[:, 5]
+            # dwdh = np.asarray(dwdh * 2, dtype=np.float32)
+            # final_boxes -= dwdh
+            # final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
+
             origin_img = vis(origin_img, final_boxes, final_scores, final_cls_inds,
                              conf=conf, class_names=self.class_names)
         return origin_img
 
+
+    @staticmethod
+    def postprocess_2(predictions, ratio, dwdh):
+
+        from nms import non_max_suppression
+        dets = non_max_suppression(predictions)[0]
+
+        dwdh = np.asarray(dwdh * 2, dtype=np.float32)
+        dets[:, :4] -= dwdh
+        dets[:, :4] /= ratio
+
+        # dwdh = np.asarray(dwdh * 2, dtype=np.float32)
+        # final_boxes -= dwdh
+        # final_boxes = np.reshape(final_boxes/ratio, (-1, 4))
+
+        return  dets
+
+
     @staticmethod
     def postprocess(predictions, ratio):
         boxes = predictions[:, :4]
-        scores = predictions[:, 4:5] * predictions[:, 5:]
+        # scores = predictions[:, 4:5] * predictions[:, 5:]
+        scores =  predictions[:, 4:]
         boxes_xyxy = np.ones_like(boxes)
         boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2.
         boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2.
