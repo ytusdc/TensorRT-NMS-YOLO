@@ -226,7 +226,7 @@ class EngineBuilder:
                 shapes = trt.Dims([bs, num_boxes, 4])
                 # [0, 0, 0] [1, 8400, 4] [1, 1, 1]
                 boxes = self.network.add_slice(previous_output, starts, shapes, strides)
-                num_classes = temp -5 
+                num_classes = temp - 5
                 starts[2] = 4
                 shapes[2] = 1
                 # [0, 0, 4] [1, 8400, 1] [1, 1, 1]

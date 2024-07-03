@@ -173,7 +173,7 @@ Yolo::Yolo(char* model_path) {
   runtime = nvinfer1::createInferRuntime(gLogger);
   initLibNvInferPlugins(&gLogger, "");
   engine = runtime->deserializeCudaEngine((void*)&buf[0], mdsize, nullptr);
-  auto in_dims = engine->getBindingDimensions(engine->getBindingIndex("image_arrays"));
+  auto in_dims = engine->getBindingDimensions(engine->getBindingIndex("images"));
   iH = in_dims.d[2];
   iW = in_dims.d[3];
   in_size = 1;

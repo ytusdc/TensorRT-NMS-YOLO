@@ -11,6 +11,7 @@ class BaseEngine(object):
         self.mean = None
         self.std = None
         self.n_classes = 80
+
         self.class_names = [ 'person', 'bicycle', 'car', 'motorcycle', 'airplane', 'bus', 'train', 'truck', 'boat', 'traffic light',
          'fire hydrant', 'stop sign', 'parking meter', 'bench', 'bird', 'cat', 'dog', 'horse', 'sheep', 'cow',
          'elephant', 'bear', 'zebra', 'giraffe', 'backpack', 'umbrella', 'handbag', 'tie', 'suitcase', 'frisbee',
@@ -20,6 +21,10 @@ class BaseEngine(object):
          'potted plant', 'bed', 'dining table', 'toilet', 'tv', 'laptop', 'mouse', 'remote', 'keyboard', 'cell phone',
          'microwave', 'oven', 'toaster', 'sink', 'refrigerator', 'book', 'clock', 'vase', 'scissors', 'teddy bear',
          'hair drier', 'toothbrush' ]
+
+        # self.n_classes = 3
+        # self.class_names = ['person', 'head', 'hat']
+
 
         logger = trt.Logger(trt.Logger.WARNING)
         logger.min_severity = trt.Logger.Severity.ERROR
@@ -151,10 +156,14 @@ class BaseEngine(object):
             # predictions = np.reshape(data, (1, -1, int(5+self.n_classes)))[0]
             predictions = np.reshape(data, (1, -1, int(4+self.n_classes)))[0]
 
-            # cc = data[0]
-            # predictions = data[0].transpose(1, 0)
+            # v8
             predictions = data[0]
             dets = self.postprocess_2(predictions, ratio, dwdh)
+
+            # v5  结果能出来，但是调节位置错误，问题不大
+            predictions = data[0][0]
+            dets = self.postprocess(predictions, ratio)
+
 
         if dets is not None:
             final_boxes, final_scores, final_cls_inds = dets[:,
@@ -188,8 +197,8 @@ class BaseEngine(object):
     @staticmethod
     def postprocess(predictions, ratio):
         boxes = predictions[:, :4]
-        # scores = predictions[:, 4:5] * predictions[:, 5:]
-        scores =  predictions[:, 4:]
+        scores = predictions[:, 4:5] * predictions[:, 5:]
+        # scores =  predictions[:, 4:]
         boxes_xyxy = np.ones_like(boxes)
         boxes_xyxy[:, 0] = boxes[:, 0] - boxes[:, 2] / 2.
         boxes_xyxy[:, 1] = boxes[:, 1] - boxes[:, 3] / 2.
