@@ -9,10 +9,13 @@ from cuda import cudart
 
 from utils import common 
 from image_batch import ImageBatcher
+from utils.utils_plugin import plugin_NMS
 
 logging.basicConfig(level=logging.INFO)
 logging.getLogger("EngineBuilder").setLevel(logging.INFO)
 log = logging.getLogger("EngineBuilder")
+
+
 
 class EngineCalibrator(trt.IInt8EntropyCalibrator2):
     """
@@ -100,177 +103,89 @@ class EngineBuilder:
         :param verbose: If enabled, a higher verbosity level will be set on the TensorRT logger.
         :param workspace: Max memory workspace to allow, in Gb.
         """
-        self.trt_logger = trt.Logger(trt.Logger.INFO)
-        if verbose:
-            self.trt_logger.min_severity = trt.Logger.Severity.VERBOSE
-
-        trt.init_libnvinfer_plugins(self.trt_logger, namespace="")
-
-        self.builder = trt.Builder(self.trt_logger)
-        self.config = self.builder.create_builder_config()
-        self.config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, workspace * (2 ** 30))
-        # self.config.max_workspace_size = workspace * (2 ** 30)  # Deprecation
-
         self.batch_size = None
         self.network = None
         self.parser = None
+        self.workspace = workspace
 
     def create_network(self, onnx_path, end2end, conf_thres, iou_thres, max_det, **kwargs):
-        """
-        Parse the ONNX graph and create the corresponding TensorRT network definition.
-        :param onnx_path: The path to the ONNX graph to load.
-        """
-        v8 = kwargs['v8']
-        v10 = kwargs['v10']
+
+        '''
+        参考： https://github.com/NVIDIA/trt-samples-for-hackathon-cn/blob/master/cookbook/01-SimpleDemo/TensorRT-8.6/main.py
+        '''
+
+        # 1、加载 logger 等级, ***** 创建logger：日志记录器
+        # available level: VERBOSE, INFO, WARNING, ERROR, INTERNAL_ERROR
+
+        self.trt_logger = trt.Logger(trt.Logger.INFO)
+
+        # if verbose:
+        #     self.trt_logger.min_severity = trt.Logger.Severity.VERBOSE
+
+        # 构建一个序列构建器， build a serialized network from scratch
+        self.builder = trt.Builder(self.trt_logger)
+
+        # 1-1、设置网络读取的 flag
+        # EXPLICIT_BATCH 相较于 IMPLICIT_BATCH 模式，会显示的将 batch 的维度包含在张量维度当中，
+        # 有了 batch大小的，我们就可以进行一些必须包含 batch 大小的操作了，如 Layer Normalization。
+        # 不然在推理阶段，应当指定推理的 batch 的大小。目前主流的使用的 EXPLICIT_BATCH 模式
         network_flags = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
 
+        # 1-2 构建一个空的网络计算图
         self.network = self.builder.create_network(network_flags)
+
+        # 1-3 create BuidlerConfig to set meta data of the network
+        self.config = self.builder.create_builder_config()
+
+        # set workspace for the optimization process (default value is total GPU memory)
+        # 2^30 = 1<<30 = 1G
+        self.config.set_memory_pool_limit(trt.MemoryPoolType.WORKSPACE, self.workspace * (2 ** 30))
+
+        # 1-4、将空的网络计算图和相应的 logger 设置装载进一个 解析器里面
         self.parser = trt.OnnxParser(self.network, self.trt_logger)
 
+        # 1-5、打开 onnx 压缩文件，进行模型的解析工作。
+        # 解析器 工作完成之后，网络计算图的内容为我们所解析的网络的内容。
         onnx_path = os.path.realpath(onnx_path)
-        with open(onnx_path, "rb") as f:
-            if not self.parser.parse(f.read()):
-                print("Failed to load ONNX file: {}".format(onnx_path))
-                for error in range(self.parser.num_errors):
-                    print(self.parser.get_error(error))
-                sys.exit(1)
+        if not os.path.isfile(onnx_path):
+            print("ONNX file not exist. Please check the onnx file path is right ? ")
+            return None
+        else:
+            with open(onnx_path, "rb") as f_r:
+                parser_flag = self.parser.parse(f_r.read())
+                if not parser_flag:
+                    print(f"ERROR: Failed to parse the ONNX file: {onnx_path}")
+                    for error in range(self.parser.num_errors):
+                        # 出错了，将相关错误的地方打印出来，进行可视化处理
+                        print(self.parser.num_errors)
+                        print(self.parser.get_error(error))
+                    #sys.exit(1)
+                    return None
+
+        # 1-6、将转换之后的模型的输入输出的对应的大小进行打印，从而进行验证
         inputs = [self.network.get_input(i) for i in range(self.network.num_inputs)]
         outputs = [self.network.get_output(i) for i in range(self.network.num_outputs)]
         print("Network Description")
         for input in inputs:
+            # 获取当前转化之前的 输入的 batch_size
             self.batch_size = input.shape[0]
             print("Input '{}' with shape {} and dtype {}".format(input.name, input.shape, input.dtype))
         for output in outputs:
             print("Output '{}' with shape {} and dtype {}".format(output.name, output.shape, output.dtype))
-        assert self.batch_size > 0
-        # self.builder.max_batch_size = self.batch_size  # This no effect for networks created with explicit batch dimension mode. Also DEPRECATED.
+        assert self.batch_size > 0   # 确保 输入的 batch_size 不为零
 
-        if v10:
-            try:
-                for previous_output in outputs:
-                    self.network.unmark_output(previous_output)
-            except:
-                previous_output = self.network.get_output(0)
-                self.network.unmark_output(previous_output)
-            # output [1, 300, 6]
-            # 添加 TopK 层，在第二个维度上找到前 100 个最大值 [1, 100, 6]
-            strides = trt.Dims([1,1,1])
-            starts = trt.Dims([0,0,0])
-            bs, num_boxes, temp = previous_output.shape
-            shapes = trt.Dims([bs, num_boxes, 4])
-            boxes = self.network.add_slice(previous_output, starts, shapes, strides)
-            starts[2] = 4
-            shapes[2] = 1
-            # [0, 0, 4] [1, 300, 1] [1, 1, 1]
-            obj_score = self.network.add_slice(previous_output, starts, shapes, strides)
-            starts[2] = 5
-            # [0, 0, 5] [1, 300, 1] [1, 1, 1]
-            cls = self.network.add_slice(previous_output, starts, shapes, strides)
-            outputs = [self.network.get_output(i) for i in range(self.network.num_outputs)]
-            print("YOLOv10 Modify")
-            def squeeze(previous_output):
-                reshape_dims = (bs, 300)
-                previous_output = self.network.add_shuffle(previous_output.get_output(0))
-                previous_output.reshape_dims    = reshape_dims
-                return previous_output
-            
-            # 定义常量值和形状
-            constant_value = 300.0
-            constant_shape = (300,)
-            constant_data = np.full(constant_shape, constant_value, dtype=np.float32)
-            num = self.network.add_constant(constant_shape, trt.Weights(constant_data))
-            num.get_output(0).name = "num"
-            self.network.mark_output(num.get_output(0))
-            boxes.get_output(0).name = "boxes"
-            self.network.mark_output(boxes.get_output(0))
-            obj_score= squeeze(obj_score)
-            obj_score.get_output(0).name = "scores"
-            self.network.mark_output(obj_score.get_output(0))
-            cls = squeeze(cls)
-            cls.get_output(0).name = "classes"
-            self.network.mark_output(cls.get_output(0))
+        v8 = kwargs['v8']
+        v10 = kwargs['v10']
+        net_work_version = "v5"
+        if v8:
+            net_work_version = "v8"
+        elif v10:
+            net_work_version = "v10"
+        print(f"now conerrt model: {net_work_version}")
 
-            for output in outputs:
-                print("Output '{}' with shape {} and dtype {}".format(output.name, output.shape, output.dtype))
-
-        if end2end and not v10:
-            try:
-                for previous_output in outputs:
-                    self.network.unmark_output(previous_output)
-            except:
-                previous_output = self.network.get_output(0)
-                self.network.unmark_output(previous_output)
-            if  v8:
-               # output [1, 84, 8400]
-                strides = trt.Dims([1,1,1])
-                starts = trt.Dims([0,0,0])
-                # 添加一个 Shuffle 层来重塑输入，为矩阵乘法做准备：
-                previous_output = self.network.add_shuffle(previous_output)
-                previous_output.second_transpose    = (0, 2, 1)
-                # output [1, 8400, 84]
-                bs, num_boxes, temp = previous_output.get_output(0).shape
-                shapes = trt.Dims([bs, num_boxes, 4])
-                # [0, 0, 0] [1, 8400, 4] [1, 1, 1]
-                boxes = self.network.add_slice(previous_output.get_output(0), starts, shapes, strides)
-                num_classes = temp -4 
-                starts[2] = 4
-                shapes[2] = num_classes
-                # [0, 0, 4] [1, 8400, 80] [1, 1, 1]
-                scores = self.network.add_slice(previous_output.get_output(0), starts, shapes, strides)
-            else:
-                # output [1, 8400, 85]
-                # slice boxes, obj_score, class_scores
-                strides = trt.Dims([1,1,1])
-                starts = trt.Dims([0,0,0])
-                bs, num_boxes, temp = previous_output.shape
-                shapes = trt.Dims([bs, num_boxes, 4])
-                # [0, 0, 0] [1, 8400, 4] [1, 1, 1]
-                boxes = self.network.add_slice(previous_output, starts, shapes, strides)
-                num_classes = temp - 5
-                starts[2] = 4
-                shapes[2] = 1
-                # [0, 0, 4] [1, 8400, 1] [1, 1, 1]
-                obj_score = self.network.add_slice(previous_output, starts, shapes, strides)
-                starts[2] = 5
-                shapes[2] = num_classes
-                # [0, 0, 5] [1, 8400, 80] [1, 1, 1]
-                scores = self.network.add_slice(previous_output, starts, shapes, strides)
-                # scores = obj_score * class_scores => [bs, num_boxes, nc]
-                scores = self.network.add_elementwise(obj_score.get_output(0), scores.get_output(0), trt.ElementWiseOperation.PROD)
-            '''
-            "plugin_version": "1",
-            "background_class": -1,  # no background class
-            "max_output_boxes": detections_per_img,
-            "score_threshold": score_thresh,
-            "iou_threshold": nms_thresh,
-            "score_activation": False,
-            "box_coding": 1,
-            '''
-            registry = trt.get_plugin_registry()
-            assert(registry)
-            creator = registry.get_plugin_creator("EfficientNMS_TRT", "1")
-            assert(creator)
-            fc = []
-            fc.append(trt.PluginField("background_class", np.array([-1], dtype=np.int32), trt.PluginFieldType.INT32))
-            fc.append(trt.PluginField("max_output_boxes", np.array([max_det], dtype=np.int32), trt.PluginFieldType.INT32))
-            fc.append(trt.PluginField("score_threshold", np.array([conf_thres], dtype=np.float32), trt.PluginFieldType.FLOAT32))
-            fc.append(trt.PluginField("iou_threshold", np.array([iou_thres], dtype=np.float32), trt.PluginFieldType.FLOAT32))
-            fc.append(trt.PluginField("box_coding", np.array([1], dtype=np.int32), trt.PluginFieldType.INT32))
-            fc.append(trt.PluginField("score_activation", np.array([0], dtype=np.int32), trt.PluginFieldType.INT32))
-
-            fc = trt.PluginFieldCollection(fc) 
-            nms_layer = creator.create_plugin("nms_layer", fc)
-
-            ddd = [boxes.get_output(0), scores.get_output(0)]
-
-            layer = self.network.add_plugin_v2([boxes.get_output(0), scores.get_output(0)], nms_layer)
-            layer.get_output(0).name = "num"
-            layer.get_output(1).name = "boxes"
-            layer.get_output(2).name = "scores"
-            layer.get_output(3).name = "classes"
-            for i in range(4):
-                self.network.mark_output(layer.get_output(i))
-
+        if end2end:
+            self.network = plugin_NMS(self.network, self.trt_logger, max_det, conf_thres, iou_thres,
+                                             network_version=net_work_version)
 
     def create_engine(self, engine_path, precision, calib_input=None, calib_cache=None, calib_num_images=5000,
                       calib_batch_size=8):
@@ -313,7 +228,6 @@ class EngineBuilder:
                         ImageBatcher(calib_input, calib_shape, calib_dtype, max_num_images=calib_num_images,
                                      exact_batches=True))
 
-        # with self.builder.build_engine(self.network, self.config) as engine, open(engine_path, "wb") as f:
         with self.builder.build_serialized_network(self.network, self.config) as engine, open(engine_path, "wb") as f:
             print("Serializing engine to file: {:}".format(engine_path))
             f.write(engine)  # .serialize()
