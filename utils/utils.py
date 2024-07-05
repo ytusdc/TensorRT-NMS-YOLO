@@ -195,3 +195,4 @@ def vis(img, boxes, scores, cls_ids, conf=0.5, class_names=None):
         cv2.putText(img, text, (x0, y0 + txt_size[1]), font, 0.4, txt_color, thickness=1)
 
     return img
+

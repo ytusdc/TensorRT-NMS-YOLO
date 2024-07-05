@@ -91,11 +91,11 @@ python trt.py -e yolov8n.trt  -i src/1.jpg -o yolov8n-1.jpg --end2end
 
 
 ```python
-!git clone https://github.com/ultralytics/yolov5.git
+git clone https://github.com/ultralytics/yolov5.git
 ```
 
 ```python
-!wget https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5n.pt
+wget https://github.com/ultralytics/yolov5/releases/download/v6.1/yolov5n.pt
 ```
 
 
@@ -274,5 +274,5 @@ If you use this repo in your publication, please cite it by using the following 
 
 Buy me a cup of coffee
 
-![](src/Sponsor.png)
+
 

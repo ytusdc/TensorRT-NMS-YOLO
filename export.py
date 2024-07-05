@@ -116,7 +116,6 @@ class EngineBuilder:
 
         # 1、加载 logger 等级, ***** 创建logger：日志记录器
         # available level: VERBOSE, INFO, WARNING, ERROR, INTERNAL_ERROR
-
         self.trt_logger = trt.Logger(trt.Logger.INFO)
 
         # if verbose:
@@ -125,12 +124,13 @@ class EngineBuilder:
         # 构建一个序列构建器， build a serialized network from scratch
         self.builder = trt.Builder(self.trt_logger)
 
-        # 1-1、设置网络读取的 flag
-        # EXPLICIT_BATCH 相较于 IMPLICIT_BATCH 模式，会显示的将 batch 的维度包含在张量维度当中，
-        # 有了 batch大小的，我们就可以进行一些必须包含 batch 大小的操作了，如 Layer Normalization。
-        # 不然在推理阶段，应当指定推理的 batch 的大小。目前主流的使用的 EXPLICIT_BATCH 模式
+        '''
+        1-1、设置网络读取的 flag
+        EXPLICIT_BATCH 相较于 IMPLICIT_BATCH 模式，会显示的将 batch 的维度包含在张量维度当中，
+        有了 batch大小的，我们就可以进行一些必须包含 batch 大小的操作了，如 Layer Normalization。
+        不然在推理阶段，应当指定推理的 batch 的大小。目前主流的使用的 EXPLICIT_BATCH 模式
+        '''
         network_flags = (1 << int(trt.NetworkDefinitionCreationFlag.EXPLICIT_BATCH))
-
         # 1-2 构建一个空的网络计算图
         self.network = self.builder.create_network(network_flags)
 
