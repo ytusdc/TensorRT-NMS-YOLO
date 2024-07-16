@@ -173,9 +173,9 @@ class BaseEngine(object):
                                    np.array(final_cls_inds)[:int(num[0])]], axis=-1)
         else:
             predictions = data[0]
-            #v8 的结果是 [1, 84, 8400]
-            # dets = self.postprocess_2(predictions, ratio, dwdh)
-            # v5  结果能出来，[1, 25200, 85]但是调节位置错误，问题不大
+
+            # v8 的输出是  [1, 84, 8400]
+            # v5 的输出是  [1, 25200, 85] 因此要做相应的维度变换
             dets = self.postprocess(predictions, ratio, dwdh=dwdh, num_classes=3)
 
         if dets is not None:
@@ -200,8 +200,8 @@ class BaseEngine(object):
             # 2、得到每个检测框的的得分数，-> box_scores = obj_conf * cls_conf
             scores = prediction[:, 4:5] * prediction[:, 5:]
         if self.mode == 'v8':
-            prediction = prediction.squeeze()
-            prediction = prediction.transpose(1, 0)
+            prediction = prediction.squeeze()           # (1, 84, 8400) -> (84, 8400)
+            prediction = prediction.transpose(1, 0)     # (84, 8400) -> (8400, 84)
             scores = prediction[:, 4:]
         # 3、转换 (center x, center y, width, height) to (x1, y1, x2, y2), 并转换为适应图片的大小
         boxes_xyxy = xywh2xyxy(prediction[:, :4])

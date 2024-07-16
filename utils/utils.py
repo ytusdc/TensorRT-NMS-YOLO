@@ -115,8 +115,8 @@ def prepareImage(image, input_size, mean, std, swap=(2, 0, 1)):
 letterbox 方式预处理图片
 '''
 def letterbox(im,
-              new_shape = (640, 640),
-              color = (114, 114, 114),
+              new_shape=(640, 640),
+              color=(114, 114, 114),
               swap=(2, 0, 1)):
     shape = im.shape[:2]  # current shape [height, width]
     if isinstance(new_shape, int):
@@ -145,7 +145,7 @@ def letterbox(im,
                             cv2.BORDER_CONSTANT,
                             value=color)  # add border
     im = cv2.cvtColor(im, cv2.COLOR_BGR2RGB)
-    im = im.transpose(swap)
+    im = im.transpose(swap)     # [height, width, channel] -> [channel, height, width]
     im = np.ascontiguousarray(im, dtype=np.float32) / 255.
     return im, r, (dw, dh)
 
